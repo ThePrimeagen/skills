@@ -14,7 +14,7 @@
 ### Medium Priority
 - [ ] Write unit tests for new examples
 - [ ] Add integration tests for is-even + is-odd interaction
-- [ ] Update README.md with new example counts
+- [x] Update README.md with new example counts
 - [ ] Create performance benchmark for Ralph loop
 
 ### Low Priority

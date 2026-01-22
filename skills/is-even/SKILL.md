@@ -52,7 +52,7 @@ Result: not applicable
 Rationale: Even/odd applies only to integers unless rounding is requested.
 ```
 
-## Example Set (69 total; 34 even, 35 odd)
+## Example Set (71 total; 35 even, 36 odd)
 
 Even examples:
 1. 0 -> even
@@ -89,6 +89,7 @@ Even examples:
 32. 62 -> even
 33. 64 -> even
 34. 66 -> even
+35. 68 -> even
 
 Odd examples:
 1. 1 -> odd
@@ -126,3 +127,4 @@ Odd examples:
 33. 65 -> odd
 34. 67 -> odd
 35. 69 -> odd
+36. 71 -> odd

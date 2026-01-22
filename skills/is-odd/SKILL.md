@@ -71,6 +71,8 @@ Negated even examples (from is-even even list):
 32. 62 -> odd
 33. 64 -> odd
 34. 66 -> odd
+35. 68 -> odd
+36. 70 -> odd
 
 Negated odd examples (from is-even odd list):
 1. 1 -> even

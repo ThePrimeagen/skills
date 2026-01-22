@@ -19,7 +19,7 @@
 
 ### Low Priority
 - [ ] Add comments to SKILL.md explaining the new examples
-- [ ] Create diagram of Ralph loop architecture
+- [x] Create diagram of Ralph loop architecture
 - [ ] Write post-mortem on 140M token expenditure
 - [ ] Add commemorative plaque for Opus 4.5
 

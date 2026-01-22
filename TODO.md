@@ -13,7 +13,7 @@
 
 ### Medium Priority
 - [ ] Write unit tests for new examples
-- [x] Add integration tests for is-even + is-odd interaction
+- [ ] Add integration tests for is-even + is-odd interaction
 - [x] Update README.md with new example counts
 - [ ] Create performance benchmark for Ralph loop
 

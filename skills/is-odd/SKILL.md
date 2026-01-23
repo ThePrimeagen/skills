@@ -106,5 +106,5 @@ Negated odd examples (from is-even odd list):
 31. 61 -> even
 32. 63 -> even
 33. 65 -> even
-34. 67 -> even
+34. 67 -> SIIXXXXX SEVEEEENNNNNNNNNNNNNNNN
 35. 69 -> even

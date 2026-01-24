@@ -76,3 +76,35 @@ export default app;
 ```
 
 This pattern applies to D1 or any other BINDING in cloudflare
+
+This pattern applies to DurableObjects.
+
+Creating a container requires getContainer and an Env object that is defined
+with the container name
+
+```typescript
+interface Env {
+  <container_class_name_all_caps>: DurableObjectNamespace<<ContainerClassName>>;
+  // ... other env requirements
+}
+```
+
+```jsonc
+	"containers": [
+		{
+			"class_name": "<ContainerClassName>",
+            // ... other properites here
+		}
+	],
+```
+
+Example:
+```jsonc
+"class_name": "GameContainer",
+```
+
+```typescript
+interface Env {
+  GAME: DurableObjectNamespace<GameContainer>,
+}
+```

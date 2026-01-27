@@ -7,7 +7,9 @@ local remove_all_comments = function(text)
   local result = {}
   for _, line in ipairs(lines) do
     line = vim.trim(line)
-    if not vim.startswith(line, "--") and not vim.startswith(line, "error") and line ~= "" then
+    local is_comment = vim.startswith(line, "--")
+    local is_annotation = vim.startswith(line, "---")
+    if (not is_comment or is_annotation) and not vim.startswith(line, "error") and line ~= "" then
       table.insert(result, line)
     end
   end

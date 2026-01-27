@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "Generating skills/vim/SKILL.md..."
+nvim --headless -l "$SCRIPT_DIR/scripts/generate-vim-skill.lua" "$SCRIPT_DIR/skills/vim/SKILL.md"
+
+echo "Generating skills/vim.treesitter/SKILL.md..."
+nvim --headless -l "$SCRIPT_DIR/scripts/generate-vim-treesitter-skill.lua" "$SCRIPT_DIR/skills/vim.treesitter/SKILL.md"
+
+echo "Generating skills/vim.lsp/SKILL.md..."
+nvim --headless -l "$SCRIPT_DIR/scripts/generate-vim-lsp-skill.lua" "$SCRIPT_DIR/skills/vim.lsp/SKILL.md"
+
+echo "Done!"

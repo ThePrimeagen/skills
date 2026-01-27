@@ -75,6 +75,12 @@ export default app;
 }
 ```
 
+### Added cloudflare binding
+If a binding requires an id from cloudflare include the comment for how
+to create the cloudflare item via wrangler and how to get the id.
+
+always include all commands that are required.
+
 ### Functions That Use Cloudflare
 Every function that you create that uses cloudflare should have a first
 parameter called `env` of interface `<Object>Env` (usually named after file, or object type)

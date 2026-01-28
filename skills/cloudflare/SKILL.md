@@ -39,12 +39,6 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { some_operation } from "./example-using-r2"
 
-// Top-level Env type for the main worker
-type Env = {
-  R2: R2Bucket;
-  // ... other bindings
-};
-
 const app = new Hono<{ Bindings: Env }>();
 app.get('/api/example', async (c) => {
   const env = c.env;
@@ -96,58 +90,18 @@ Here is an example of creating a d1 entry for the user.  Notice i include the co
 📣 Remember to rerun 'wrangler types' after you change your wrangler.jsonc file.
 
 ### Functions That Use Cloudflare
-Every function that you create that uses cloudflare should have a first
-parameter called `env` of interface `<Object>Env` (usually named after file, or object type)
+Every function that you create that uses cloudflare bindings should have a first
+parameter called `env` of interface `Env` defined typically in ./worker-congifuration.d.ts
 
 ```typescript
 // in file matchmaking.ts
-export async function get_game(env: MatchMakingEnv): Promise<...> {
+export async function get_game(env: Env): Promise<...> {
   ...
 }
 ```
 
 This pattern of env applies to all cloudflare bindings such as D1, R2, Containers, Workers, etc etc
 
-### Example using Containers and Durable Objects
-Creating a container requires getContainer and an Env object that is defined
-with the container name
-
-```typescript
-interface Env {
-  <container_class_name_all_caps>: DurableObjectNamespace<<ContainerClassName>>;
-  // ... other env requirements
-}
-```
-
-```jsonc
-	"containers": [
-		{
-			"class_name": "<ContainerClassName>",
-            // ... other properites here
-		}
-	],
-```
-
-Example:
-```jsonc
-"class_name": "GameContainer",
-```
-
-```typescript
-interface Env {
-  GAME: DurableObjectNamespace<GameContainer>,
-}
-```
-
 ### Env object
-* always search for the main `Env` (usually defined in the main worker file). Use the same interface field names/values when creating sub env
-* When creating env interfaces, never import within it `import("...")`, always
-import above the interface if you are creating an interface, such as the following:
-
-```typescript
-import { DOContainer } from "./path/to/container";
-interface MatchMakingEnv = {
-    DO_NAME: DurableObjectNamespace<DOContainer>
-}
-```
-
+* `Env` is always defined in worker-congifuration.d.ts
+* never create one yourself, always use the ambient definition

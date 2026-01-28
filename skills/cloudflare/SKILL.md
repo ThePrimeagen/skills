@@ -75,11 +75,23 @@ export default app;
 }
 ```
 
-### Added cloudflare binding
-If a binding requires an id from cloudflare include the comment for how
-to create the cloudflare item via wrangler and how to get the id.
+#### Added cloudflare binding
+Here is an example of creating a d1 entry for the user.  Notice i include the command AND how to get the ID
 
-always include all commands that are required.
+```jsonc
+    // wrangler d1 create <db-name>
+  "d1_databases": [
+    {
+      "binding": "<DB_NAME>",
+      "database_name": "<db-name>",
+
+      // when creating the db, id will be printed out
+      // if you missed it: wrangler d1 list
+      "database_id": "<id>"
+    }
+  ]
+}
+```
 
 ### Functions That Use Cloudflare
 Every function that you create that uses cloudflare should have a first

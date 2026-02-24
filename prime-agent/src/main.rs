@@ -22,7 +22,7 @@ const SKILLS_DIR_ENV: &str = "PRIME_AGENT_SKILLS_DIR";
 const ANSI_YELLOW: &str = "\x1B[33m";
 const ANSI_GREEN: &str = "\x1B[32m";
 const ANSI_RESET: &str = "\x1B[0m";
-const TS_AGENTS_MD: &str = "* every change made to the project should run:\n * typecheck\n * lint\n * prettier\n * tests\n\nif everything passes, then bump the version patch version.\n\n* the project should always use bun to run stuff and install libraries\n * bun run dev : to run the dev server.\n * bun run db:local : to run any local postgres server if that is needed\n * bun run test|typecheck|lint|format|bump : those are the base operations\n";
+const TS_AGENTS_MD: &str = "* every change made to the project should run:\n * typecheck\n * lint\n * prettier\n * tests\n\nif everything passes, then bump the version patch version.\n\n* the project should always use bun to run stuff and install libraries\n * bun run dev : to run the dev server.\n * bun run db:local : to run any local postgres server if that is needed\n * bun run test|typecheck|lint|format|bump : those are the base operations\n* This is a SolidJS project — never add React. `rsbuild.config.ts` must always register `pluginBabel({ include: /\\.(?:jsx|tsx)$/ })` before `pluginSolid()` so JSX compiles to Solid, not React.\n* Hono route modules must export their sub-app and be composed via chaining (e.g. `app.route(\"/path\", sub)`) so the exported `app` type reflects all routes.";
 
 type AppResult<T> = Result<T, String>;
 

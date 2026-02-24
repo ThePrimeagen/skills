@@ -1,2 +1,6 @@
 /tmp/
 .nvimlog
+
+# Rust build artifacts and temp files
+target/
+**/*.rs.bk

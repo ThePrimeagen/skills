@@ -1,0 +1,23 @@
+[package]
+name = "prime-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+restriction = { level = "deny", priority = -1 }
+blanket_clippy_restriction_lints = "allow"
+lint_groups_priority = "allow"
+cargo_common_metadata = "allow"
+implicit_return = "allow"
+print_stdout = "allow"
+
+[dependencies]

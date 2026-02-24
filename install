@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$ROOT_DIR/prime-agent"
+MANIFEST_PATH="$PROJECT_DIR/Cargo.toml"
+GLOBAL_BIN_PATH="$HOME/.local/bin/prime-agent"
+GLOBAL_BIN_DIR="$(dirname "$GLOBAL_BIN_PATH")"
+ARTIFACT_PATH="$PROJECT_DIR/target/release/prime-agent"
+
+if [[ ! -f "$MANIFEST_PATH" ]]; then
+  printf "Error: Rust manifest not found at %s\n" "$MANIFEST_PATH" >&2
+  exit 1
+fi
+
+printf "==> Running tests\n"
+cargo test --manifest-path "$MANIFEST_PATH"
+
+printf "==> Running clippy (max strict)\n"
+cargo clippy --all-targets --all-features --manifest-path "$MANIFEST_PATH" -- -D warnings
+
+printf "==> Validating debug build\n"
+cargo build --manifest-path "$MANIFEST_PATH"
+
+printf "==> Building release artifact\n"
+cargo build --release --manifest-path "$MANIFEST_PATH"
+
+printf "==> Installing global artifact\n"
+mkdir -p "$GLOBAL_BIN_DIR"
+install -m 755 "$ARTIFACT_PATH" "$GLOBAL_BIN_PATH"
+
+printf "Installed prime-agent at %s\n" "$GLOBAL_BIN_PATH"
+printf "Make sure %s is on your PATH.\n" "$GLOBAL_BIN_DIR"

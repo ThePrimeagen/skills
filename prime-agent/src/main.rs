@@ -16,13 +16,14 @@ const TARGET_DIR_FLAG: &str = "--target-dir";
 const HELP_FLAG: &str = "--help";
 const SHORT_HELP_FLAG: &str = "-h";
 const INIT_COMMAND: &str = "init";
+const CLEAR_COMMAND: &str = "clear";
 const TS_TEMPLATE: &str = "ts";
 const TEST_INPUT_ENV: &str = "PRIME_AGENT_TEST_INPUT";
 const SKILLS_DIR_ENV: &str = "PRIME_AGENT_SKILLS_DIR";
 const ANSI_YELLOW: &str = "\x1B[33m";
 const ANSI_GREEN: &str = "\x1B[32m";
 const ANSI_RESET: &str = "\x1B[0m";
-const TS_AGENTS_MD: &str = "* every change made to the project should run:\n * typecheck\n * lint\n * prettier\n * tests\n\nif everything passes, then bump the version patch version.\n\n* the project should always use bun to run stuff and install libraries\n * bun run dev : to run the dev server.\n * bun run db:local : to run any local postgres server if that is needed\n * bun run test|typecheck|lint|format|bump : those are the base operations\n* This is a SolidJS project — never add React. `rsbuild.config.ts` must always register `pluginBabel({ include: /\\.(?:jsx|tsx)$/ })` before `pluginSolid()` so JSX compiles to Solid, not React.\n* Hono route modules must export their sub-app and be composed via chaining (e.g. `app.route(\"/path\", sub)`) so the exported `app` type reflects all routes.";
+const TS_AGENTS_MD: &str = "* every change made to the project should run:\n * typecheck\n * lint\n * prettier\n * tests\n\nif everything passes, then bump the version patch version.\n\n* the project should always use bun to run stuff and install libraries\n * bun run dev : to run the dev server.\n * bun run db:local : to run any local postgres server if that is needed\n * bun run test|typecheck|lint|format|bump : those are the base operations\n";
 
 type AppResult<T> = Result<T, String>;
 
@@ -33,6 +34,7 @@ struct Config {
 enum CommandKind {
     Link { target_dir: Option<PathBuf> },
     Init { template: String },
+    Clear { target_dir: Option<PathBuf> },
 }
 
 struct Skill {
@@ -90,14 +92,15 @@ fn run() -> AppResult<()> {
             let layout = ensure_target_layout(&target_dir)?;
             let preselected = detect_preselected(&skills, &layout);
             let selected = select_skills(&skills, preselected)?;
-            let linked_count = apply_selection(&skills, &selected, &layout)?;
+            let copied_count = apply_selection(&skills, &selected, &layout)?;
 
             println!(
-                "Linked {linked_count} skill(s) into {}",
+                "Copied {copied_count} skill(s) into {}",
                 target_dir.display()
             );
         }
         CommandKind::Init { template } => run_init(&template)?,
+        CommandKind::Clear { target_dir } => run_clear(target_dir)?,
     }
 
     Ok(())
@@ -137,9 +140,26 @@ fn parse_args() -> AppResult<Config> {
         });
     }
 
+    if first_argument == OsStr::new(CLEAR_COMMAND) {
+        let mut remaining_arguments: Vec<OsString> = Vec::new();
+        remaining_arguments.extend(args);
+        let target_dir = parse_target_dir_args(remaining_arguments)?;
+        return Ok(Config {
+            command: CommandKind::Clear { target_dir },
+        });
+    }
+
     let mut remaining_arguments: Vec<OsString> = vec![first_argument];
     remaining_arguments.extend(args);
 
+    let target_dir = parse_target_dir_args(remaining_arguments)?;
+
+    Ok(Config {
+        command: CommandKind::Link { target_dir },
+    })
+}
+
+fn parse_target_dir_args(remaining_arguments: Vec<OsString>) -> AppResult<Option<PathBuf>> {
     let mut target_dir: Option<PathBuf> = None;
 
     let mut remaining_iter = remaining_arguments.into_iter();
@@ -155,15 +175,15 @@ fn parse_args() -> AppResult<Config> {
         return Err(format!("unknown argument: {}", argument.to_string_lossy()));
     }
 
-    Ok(Config {
-        command: CommandKind::Link { target_dir },
-    })
+    Ok(target_dir)
 }
 
 fn print_help() {
     println!("prime-agent");
     println!("prime-agent --target-dir <path>");
     println!("prime-agent init ts");
+    println!("prime-agent clear");
+    println!("prime-agent clear --target-dir <path>");
 }
 
 fn run_init(template: &str) -> AppResult<()> {
@@ -179,6 +199,21 @@ fn run_init(template: &str) -> AppResult<()> {
         .map_err(|error| format!("failed to write {}: {error}", agents_path.display()))?;
 
     println!("Initialized ts project in {}", project_dir.display());
+    Ok(())
+}
+
+fn run_clear(explicit_target_dir: Option<PathBuf>) -> AppResult<()> {
+    let target_dir = resolve_target_dir(explicit_target_dir)?;
+    let skills_dir = resolve_skills_dir()?;
+    let skills = load_skills(&skills_dir)?;
+
+    let layout = target_layout(&target_dir);
+    let removed_count = clear_prime_agent_skills(&skills, &layout)?;
+
+    println!(
+        "Cleared {removed_count} prime-agent skill(s) from {}",
+        target_dir.display()
+    );
     Ok(())
 }
 
@@ -277,8 +312,9 @@ fn load_skills(skills_dir: &Path) -> AppResult<Vec<Skill>> {
 }
 
 fn ensure_target_layout(target_dir: &Path) -> AppResult<TargetLayout> {
-    let agents_skills_dir = target_dir.join(".agents").join("skills");
-    let cursor_rules_dir = target_dir.join(".cursor").join("rules");
+    let layout = target_layout(target_dir);
+    let agents_skills_dir = layout.agents_skills_dir.clone();
+    let cursor_rules_dir = layout.cursor_rules_dir.clone();
 
     fs::create_dir_all(&agents_skills_dir).map_err(|error| {
         format!(
@@ -294,10 +330,40 @@ fn ensure_target_layout(target_dir: &Path) -> AppResult<TargetLayout> {
         )
     })?;
 
-    Ok(TargetLayout {
-        agents_skills_dir,
-        cursor_rules_dir,
-    })
+    Ok(layout)
+}
+
+fn target_layout(target_dir: &Path) -> TargetLayout {
+    TargetLayout {
+        agents_skills_dir: target_dir.join(".agents").join("skills"),
+        cursor_rules_dir: target_dir.join(".cursor").join("rules"),
+    }
+}
+
+fn clear_prime_agent_skills(skills: &[Skill], layout: &TargetLayout) -> AppResult<usize> {
+    let mut removed_count = 0_usize;
+
+    for skill in skills {
+        let agents_path = layout.agents_skills_dir.join(&skill.name);
+        let cursor_path = layout.cursor_rules_dir.join(&skill.name);
+        let mut removed_any = false;
+
+        if path_exists(&agents_path) {
+            remove_path(&agents_path)?;
+            removed_any = true;
+        }
+
+        if path_exists(&cursor_path) {
+            remove_path(&cursor_path)?;
+            removed_any = true;
+        }
+
+        if removed_any {
+            removed_count += 1;
+        }
+    }
+
+    Ok(removed_count)
 }
 
 fn detect_preselected(skills: &[Skill], layout: &TargetLayout) -> Vec<bool> {
@@ -676,53 +742,172 @@ fn apply_selection(
         return Err("selection size did not match available skills".to_owned());
     }
 
-    let mut linked_count = 0_usize;
+    let mut copied_count = 0_usize;
 
     for (skill, is_selected) in skills.iter().zip(selection.iter()) {
-        let agents_link = layout.agents_skills_dir.join(&skill.name);
-        let cursor_link = layout.cursor_rules_dir.join(&skill.name);
+        let agents_path = layout.agents_skills_dir.join(&skill.name);
+        let cursor_path = layout.cursor_rules_dir.join(&skill.name);
 
         if *is_selected {
-            sync_link(&skill.source_path, &agents_link)?;
-            sync_link(&skill.source_path, &cursor_link)?;
-            linked_count += 1;
+            sync_skill_copy(
+                &skill.source_path,
+                &skill.name,
+                &agents_path,
+                CopyTarget::Agents,
+            )?;
+            sync_skill_copy(
+                &skill.source_path,
+                &skill.name,
+                &cursor_path,
+                CopyTarget::Cursor,
+            )?;
+            copied_count += 1;
             continue;
         }
 
-        remove_path_if_exists(&agents_link)?;
-        remove_path_if_exists(&cursor_link)?;
+        remove_path_if_exists(&agents_path)?;
+        remove_path_if_exists(&cursor_path)?;
     }
 
-    Ok(linked_count)
+    Ok(copied_count)
 }
 
-fn sync_link(source: &Path, destination: &Path) -> AppResult<()> {
-    if let Ok(metadata) = fs::symlink_metadata(destination) {
-        if metadata.file_type().is_symlink() {
-            let existing_target = fs::read_link(destination).map_err(|error| {
-                format!(
-                    "failed to read existing symlink {}: {error}",
-                    destination.display()
-                )
-            })?;
+enum CopyTarget {
+    Agents,
+    Cursor,
+}
 
-            if existing_target == source {
-                return Ok(());
-            }
-        }
+fn sync_skill_copy(
+    source: &Path,
+    skill_name: &str,
+    destination: &Path,
+    target: CopyTarget,
+) -> AppResult<()> {
+    remove_path_if_exists(destination)?;
+    copy_directory_recursive(source, destination, skill_name, &target)
+}
 
-        remove_path(destination)?;
-    }
-
-    create_symlink(source, destination).map_err(|error| {
+fn copy_directory_recursive(
+    source: &Path,
+    destination: &Path,
+    skill_name: &str,
+    target: &CopyTarget,
+) -> AppResult<()> {
+    fs::create_dir_all(destination).map_err(|error| {
         format!(
-            "failed to create symlink {} -> {}: {error}",
-            destination.display(),
+            "failed to create destination directory {}: {error}",
+            destination.display()
+        )
+    })?;
+
+    let entries = fs::read_dir(source).map_err(|error| {
+        format!(
+            "failed to read source directory {}: {error}",
             source.display()
         )
     })?;
 
+    for entry_result in entries {
+        let entry = entry_result
+            .map_err(|error| format!("failed to read source directory entry: {error}"))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "failed to inspect source entry {}: {error}",
+                source_path.display()
+            )
+        })?;
+
+        if file_type.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path, skill_name, target)?;
+            continue;
+        }
+
+        if file_type.is_file() {
+            copy_file_for_target(&source_path, &destination_path, skill_name, target)?;
+            continue;
+        }
+    }
+
     Ok(())
+}
+
+fn copy_file_for_target(
+    source: &Path,
+    destination: &Path,
+    skill_name: &str,
+    target: &CopyTarget,
+) -> AppResult<()> {
+    if source.extension() == Some(OsStr::new("md")) {
+        let contents = fs::read_to_string(source).map_err(|error| {
+            format!("failed to read markdown file {}: {error}", source.display())
+        })?;
+
+        let transformed_contents = match target {
+            CopyTarget::Agents => remove_cursor_header(&contents),
+            CopyTarget::Cursor => ensure_cursor_header(&contents, skill_name),
+        };
+
+        fs::write(destination, transformed_contents).map_err(|error| {
+            format!(
+                "failed to write markdown file {}: {error}",
+                destination.display()
+            )
+        })?;
+        return Ok(());
+    }
+
+    fs::copy(source, destination).map_err(|error| {
+        format!(
+            "failed to copy file {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn remove_cursor_header(contents: &str) -> String {
+    if let Some(body_start) = cursor_header_body_start(contents) {
+        return contents[body_start..].to_owned();
+    }
+
+    contents.to_owned()
+}
+
+fn ensure_cursor_header(contents: &str, skill_name: &str) -> String {
+    if cursor_header_body_start(contents).is_some() {
+        return contents.to_owned();
+    }
+
+    format!("---\ndescription: {skill_name}\nglobs: \"**/*\"\nalwaysApply: false\n---\n{contents}")
+}
+
+fn cursor_header_body_start(contents: &str) -> Option<usize> {
+    let mut lines = contents.split_inclusive('\n');
+    let first_line = lines.next()?;
+    if trim_line(first_line) != "---" {
+        return None;
+    }
+
+    let mut offset = first_line.len();
+    for line in lines {
+        offset += line.len();
+        if trim_line(line) == "---" {
+            return Some(offset);
+        }
+    }
+
+    None
+}
+
+fn trim_line(line: &str) -> &str {
+    let without_newline = line.strip_suffix('\n').unwrap_or(line);
+    without_newline
+        .strip_suffix('\r')
+        .unwrap_or(without_newline)
 }
 
 fn remove_path_if_exists(path: &Path) -> AppResult<()> {
@@ -746,17 +931,4 @@ fn remove_path(path: &Path) -> AppResult<()> {
     fs::remove_file(path)
         .map_err(|error| format!("failed to remove path {}: {error}", path.display()))?;
     Ok(())
-}
-
-#[cfg(unix)]
-fn create_symlink(source: &Path, destination: &Path) -> io::Result<()> {
-    std::os::unix::fs::symlink(source, destination)
-}
-
-#[cfg(not(unix))]
-fn create_symlink(_source: &Path, _destination: &Path) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        "prime-agent currently supports symlinks on Unix only",
-    ))
 }

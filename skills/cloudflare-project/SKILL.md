@@ -1,3 +1,9 @@
+---
+description: Cloudflare Hono TypeScript project rules
+globs: src/**/*.ts
+alwaysApply: false
+---
+
 ## Cloudflare Project (Hono + TypeScript)
 
 ### Rules
@@ -6,6 +12,9 @@
 3. Keep TypeScript at strictest settings: extend `@tsconfig/strictest/tsconfig.json` (or equivalent strictest flags) and do not relax strict options.
 4. Generate runtime and binding types with `npx wrangler types`; include `./worker-configuration.d.ts` in `tsconfig.json` and rerun after any `wrangler.jsonc` change.
 5. Do not define routes inline in the worker entrypoint; each route must be a named function in route modules grouped by domain (for example `src/routes/auth.ts`) and then mounted from `src/index.ts`.
+6. If the project includes a UI framework, use Rsbuild to build the frontend artifact.
+7. Use Oxlint for both prettier-style formatting checks and lint checks.
+8. Use `tsgo` for type checking.
 
 ### Example 1: Bootstrap + strict typing + Wrangler types
 ```bash
@@ -61,4 +70,17 @@ const app = new Hono<{ Bindings: Env }>();
 registerAuthRoutes(app);
 
 export default app;
+```
+
+### Example 3: Rsbuild + Oxlint + tsgo scripts
+```jsonc
+// package.json
+{
+  "scripts": {
+    "build:ui": "rsbuild build",
+    "lint": "oxlint .",
+    "format:check": "oxlint .",
+    "typecheck": "tsgo"
+  }
+}
 ```

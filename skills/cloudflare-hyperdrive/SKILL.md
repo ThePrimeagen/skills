@@ -1,3 +1,9 @@
+---
+description: Cloudflare Hyperdrive connection usage rules
+globs: src/**/*.ts
+alwaysApply: false
+---
+
 ## Cloudflare Hyperdrive
 
 ### Rules
@@ -21,4 +27,3 @@ export default {
   },
 } satisfies ExportedHandler<{ HYPERDRIVE: Hyperdrive }>;
 ```
-

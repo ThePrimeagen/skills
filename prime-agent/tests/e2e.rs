@@ -48,6 +48,40 @@ fn assert_command_succeeds(output: &Output) {
     );
 }
 
+fn run_prime_agent<const ARG_COUNT: usize>(
+    project_dir: &Path,
+    skills_root: &Path,
+    args: [&str; ARG_COUNT],
+    scripted_input: Option<&str>,
+) -> Result<Output, Box<dyn Error>> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    command
+        .current_dir(project_dir)
+        .env("PRIME_AGENT_SKILLS_DIR", skills_root);
+
+    for argument in args {
+        command.arg(argument);
+    }
+
+    if let Some(input) = scripted_input {
+        command.env("PRIME_AGENT_TEST_INPUT", input);
+    }
+
+    let output = command.output()?;
+    Ok(output)
+}
+
+fn install_skill(
+    project_dir: &Path,
+    skills_root: &Path,
+    skill_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let script = format!("type:{skill_name},space,enter");
+    let output = run_prime_agent(project_dir, skills_root, [], Some(&script))?;
+    assert_command_succeeds(&output);
+    Ok(())
+}
+
 fn assert_regular_directory(path: &Path) -> Result<(), Box<dyn Error>> {
     let metadata = fs::symlink_metadata(path)?;
     assert!(
@@ -588,6 +622,142 @@ fn init_unsupported_template_fails() -> Result<(), Box<dyn Error>> {
     assert!(
         stderr_text.contains("Unsupported init"),
         "stderr did not include unsupported init message\nstderr:\n{stderr_text}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn status_reports_outdated_skills() -> Result<(), Box<dyn Error>> {
+    let skills_root = skills_dir()?;
+    let skill_names = sorted_skill_names(&skills_root)?;
+    let skill_name = unique_full_name_query(&skill_names)?;
+    let skill_source = skills_root.join(&skill_name);
+    let source_markdown = first_markdown_file(&skill_source)?;
+    let relative_markdown = source_markdown.strip_prefix(&skill_source)?;
+
+    let temp_dir = tempfile::Builder::new()
+        .prefix("prime-agent-status-outdated-")
+        .tempdir_in("/tmp")?;
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir_all(&project_dir)?;
+
+    install_skill(&project_dir, &skills_root, &skill_name)?;
+
+    let agents_markdown = project_dir
+        .join(".agents")
+        .join("skills")
+        .join(&skill_name)
+        .join(relative_markdown);
+    let mut local_contents = fs::read_to_string(&agents_markdown)?;
+    local_contents.push_str("\nlocal edit\n");
+    fs::write(&agents_markdown, local_contents)?;
+
+    let output = run_prime_agent(&project_dir, &skills_root, ["status"], None)?;
+    assert_command_succeeds(&output);
+
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout_text.contains("Out-of-date skill(s)"),
+        "expected outdated status summary\nstdout:\n{stdout_text}"
+    );
+    assert!(
+        stdout_text.contains(&skill_name),
+        "expected status output to include skill name\nstdout:\n{stdout_text}"
+    );
+    assert!(
+        stdout_text.contains(".agents"),
+        "expected status output to include affected location\nstdout:\n{stdout_text}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn link_mode_reports_outdated_without_overwriting() -> Result<(), Box<dyn Error>> {
+    let skills_root = skills_dir()?;
+    let skill_names = sorted_skill_names(&skills_root)?;
+    let skill_name = unique_full_name_query(&skill_names)?;
+    let skill_source = skills_root.join(&skill_name);
+    let source_markdown = first_markdown_file(&skill_source)?;
+    let relative_markdown = source_markdown.strip_prefix(&skill_source)?;
+
+    let temp_dir = tempfile::Builder::new()
+        .prefix("prime-agent-link-outdated-")
+        .tempdir_in("/tmp")?;
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir_all(&project_dir)?;
+
+    install_skill(&project_dir, &skills_root, &skill_name)?;
+
+    let agents_markdown = project_dir
+        .join(".agents")
+        .join("skills")
+        .join(&skill_name)
+        .join(relative_markdown);
+    let mut local_contents = fs::read_to_string(&agents_markdown)?;
+    local_contents.push_str("\nlocal edit\n");
+    fs::write(&agents_markdown, &local_contents)?;
+
+    let output = run_prime_agent(&project_dir, &skills_root, [], Some("enter"))?;
+    assert_command_succeeds(&output);
+
+    let post_run_contents = fs::read_to_string(&agents_markdown)?;
+    assert_eq!(post_run_contents, local_contents);
+
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout_text.contains("Out-of-date skill(s)"),
+        "expected link mode to include outdated summary\nstdout:\n{stdout_text}"
+    );
+    assert!(
+        stdout_text.contains(&skill_name),
+        "expected link mode to include outdated skill\nstdout:\n{stdout_text}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn sync_updates_existing_skills() -> Result<(), Box<dyn Error>> {
+    let skills_root = skills_dir()?;
+    let skill_names = sorted_skill_names(&skills_root)?;
+    let skill_name = unique_full_name_query(&skill_names)?;
+    let skill_source = skills_root.join(&skill_name);
+    let source_markdown = first_markdown_file(&skill_source)?;
+    let source_contents = fs::read_to_string(&source_markdown)?;
+    let relative_markdown = source_markdown.strip_prefix(&skill_source)?;
+
+    let temp_dir = tempfile::Builder::new()
+        .prefix("prime-agent-sync-")
+        .tempdir_in("/tmp")?;
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir_all(&project_dir)?;
+
+    install_skill(&project_dir, &skills_root, &skill_name)?;
+
+    let agents_markdown = project_dir
+        .join(".agents")
+        .join("skills")
+        .join(&skill_name)
+        .join(relative_markdown);
+    let mut local_contents = fs::read_to_string(&agents_markdown)?;
+    local_contents.push_str("\nlocal edit\n");
+    fs::write(&agents_markdown, local_contents)?;
+
+    let sync_output = run_prime_agent(&project_dir, &skills_root, ["sync"], None)?;
+    assert_command_succeeds(&sync_output);
+
+    let expected_agents = strip_cursor_header(&source_contents);
+    let synced_contents = fs::read_to_string(&agents_markdown)?;
+    assert_eq!(synced_contents, expected_agents);
+
+    let status_output = run_prime_agent(&project_dir, &skills_root, ["status"], None)?;
+    assert_command_succeeds(&status_output);
+    let status_stdout = String::from_utf8_lossy(&status_output.stdout);
+    assert!(
+        status_stdout.contains("up to date"),
+        "expected status to report up-to-date after sync\nstdout:\n{status_stdout}"
     );
 
     Ok(())

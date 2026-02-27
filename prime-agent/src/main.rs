@@ -2,6 +2,7 @@
 
 #![allow(clippy::pedantic, clippy::restriction, clippy::nursery)]
 
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -17,6 +18,8 @@ const HELP_FLAG: &str = "--help";
 const SHORT_HELP_FLAG: &str = "-h";
 const INIT_COMMAND: &str = "init";
 const CLEAR_COMMAND: &str = "clear";
+const STATUS_COMMAND: &str = "status";
+const SYNC_COMMAND: &str = "sync";
 const TS_TEMPLATE: &str = "ts";
 const TEST_INPUT_ENV: &str = "PRIME_AGENT_TEST_INPUT";
 const SKILLS_DIR_ENV: &str = "PRIME_AGENT_SKILLS_DIR";
@@ -35,6 +38,24 @@ enum CommandKind {
     Link { target_dir: Option<PathBuf> },
     Init { template: String },
     Clear { target_dir: Option<PathBuf> },
+    Status { target_dir: Option<PathBuf> },
+    Sync { target_dir: Option<PathBuf> },
+}
+
+struct ApplySelectionResult {
+    added_count: usize,
+    removed_count: usize,
+}
+
+struct SkillStatusReport {
+    managed_count: usize,
+    outdated_skills: Vec<OutdatedSkill>,
+}
+
+struct OutdatedSkill {
+    name: String,
+    agents_outdated: bool,
+    cursor_outdated: bool,
 }
 
 struct Skill {
@@ -92,15 +113,22 @@ fn run() -> AppResult<()> {
             let layout = ensure_target_layout(&target_dir)?;
             let preselected = detect_preselected(&skills, &layout);
             let selected = select_skills(&skills, preselected)?;
-            let copied_count = apply_selection(&skills, &selected, &layout)?;
+            let result = apply_selection(&skills, &selected, &layout)?;
 
             println!(
-                "Copied {copied_count} skill(s) into {}",
-                target_dir.display()
+                "Updated selection in {} (added {}, removed {})",
+                target_dir.display(),
+                result.added_count,
+                result.removed_count
             );
+
+            let report = collect_skill_status_report(&skills, &layout)?;
+            print_skill_status_report(&target_dir, &report);
         }
         CommandKind::Init { template } => run_init(&template)?,
         CommandKind::Clear { target_dir } => run_clear(target_dir)?,
+        CommandKind::Status { target_dir } => run_status(target_dir)?,
+        CommandKind::Sync { target_dir } => run_sync(target_dir)?,
     }
 
     Ok(())
@@ -149,6 +177,24 @@ fn parse_args() -> AppResult<Config> {
         });
     }
 
+    if first_argument == OsStr::new(STATUS_COMMAND) {
+        let mut remaining_arguments: Vec<OsString> = Vec::new();
+        remaining_arguments.extend(args);
+        let target_dir = parse_target_dir_args(remaining_arguments)?;
+        return Ok(Config {
+            command: CommandKind::Status { target_dir },
+        });
+    }
+
+    if first_argument == OsStr::new(SYNC_COMMAND) {
+        let mut remaining_arguments: Vec<OsString> = Vec::new();
+        remaining_arguments.extend(args);
+        let target_dir = parse_target_dir_args(remaining_arguments)?;
+        return Ok(Config {
+            command: CommandKind::Sync { target_dir },
+        });
+    }
+
     let mut remaining_arguments: Vec<OsString> = vec![first_argument];
     remaining_arguments.extend(args);
 
@@ -184,6 +230,10 @@ fn print_help() {
     println!("prime-agent init ts");
     println!("prime-agent clear");
     println!("prime-agent clear --target-dir <path>");
+    println!("prime-agent status");
+    println!("prime-agent status --target-dir <path>");
+    println!("prime-agent sync");
+    println!("prime-agent sync --target-dir <path>");
 }
 
 fn run_init(template: &str) -> AppResult<()> {
@@ -214,6 +264,36 @@ fn run_clear(explicit_target_dir: Option<PathBuf>) -> AppResult<()> {
         "Cleared {removed_count} prime-agent skill(s) from {}",
         target_dir.display()
     );
+    Ok(())
+}
+
+fn run_status(explicit_target_dir: Option<PathBuf>) -> AppResult<()> {
+    let target_dir = resolve_target_dir(explicit_target_dir)?;
+    let skills_dir = resolve_skills_dir()?;
+    let skills = load_skills(&skills_dir)?;
+    let layout = target_layout(&target_dir);
+    let report = collect_skill_status_report(&skills, &layout)?;
+
+    print_skill_status_report(&target_dir, &report);
+    Ok(())
+}
+
+fn run_sync(explicit_target_dir: Option<PathBuf>) -> AppResult<()> {
+    let target_dir = resolve_target_dir(explicit_target_dir)?;
+    let skills_dir = resolve_skills_dir()?;
+    let skills = load_skills(&skills_dir)?;
+
+    if skills.is_empty() {
+        return Err(format!("no skills were found in {}", skills_dir.display()));
+    }
+
+    let layout = ensure_target_layout(&target_dir)?;
+    let managed_selection = detect_preselected(&skills, &layout);
+    let synced_count = sync_selected_skills(&skills, &managed_selection, &layout)?;
+    let report = collect_skill_status_report(&skills, &layout)?;
+
+    println!("Synced {synced_count} skill(s) in {}", target_dir.display());
+    print_skill_status_report(&target_dir, &report);
     Ok(())
 }
 
@@ -376,6 +456,238 @@ fn detect_preselected(skills: &[Skill], layout: &TargetLayout) -> Vec<bool> {
     }
 
     selected
+}
+
+fn collect_skill_status_report(
+    skills: &[Skill],
+    layout: &TargetLayout,
+) -> AppResult<SkillStatusReport> {
+    let mut managed_count = 0_usize;
+    let mut outdated_skills: Vec<OutdatedSkill> = Vec::new();
+
+    for skill in skills {
+        let agents_path = layout.agents_skills_dir.join(&skill.name);
+        let cursor_path = layout.cursor_rules_dir.join(&skill.name);
+        let has_agents = path_exists(&agents_path);
+        let has_cursor = path_exists(&cursor_path);
+
+        if !has_agents && !has_cursor {
+            continue;
+        }
+
+        managed_count += 1;
+
+        let agents_outdated = if has_agents {
+            target_copy_is_outdated(
+                &skill.source_path,
+                &skill.name,
+                &agents_path,
+                CopyTarget::Agents,
+            )?
+        } else {
+            true
+        };
+
+        let cursor_outdated = if has_cursor {
+            target_copy_is_outdated(
+                &skill.source_path,
+                &skill.name,
+                &cursor_path,
+                CopyTarget::Cursor,
+            )?
+        } else {
+            true
+        };
+
+        if agents_outdated || cursor_outdated {
+            outdated_skills.push(OutdatedSkill {
+                name: skill.name.clone(),
+                agents_outdated,
+                cursor_outdated,
+            });
+        }
+    }
+
+    Ok(SkillStatusReport {
+        managed_count,
+        outdated_skills,
+    })
+}
+
+fn print_skill_status_report(target_dir: &Path, report: &SkillStatusReport) {
+    if report.managed_count == 0 {
+        println!(
+            "No prime-agent-managed skills found in {}",
+            target_dir.display()
+        );
+        return;
+    }
+
+    if report.outdated_skills.is_empty() {
+        println!(
+            "All {} managed skill(s) are up to date in {}",
+            report.managed_count,
+            target_dir.display()
+        );
+        return;
+    }
+
+    println!(
+        "Out-of-date skill(s) in {}: {}",
+        target_dir.display(),
+        report.outdated_skills.len()
+    );
+    for outdated_skill in &report.outdated_skills {
+        let location = match (
+            outdated_skill.agents_outdated,
+            outdated_skill.cursor_outdated,
+        ) {
+            (true, true) => ".agents and .cursor",
+            (true, false) => ".agents",
+            (false, true) => ".cursor",
+            (false, false) => "none",
+        };
+
+        println!("- {} ({location})", outdated_skill.name);
+    }
+}
+
+fn target_copy_is_outdated(
+    source: &Path,
+    skill_name: &str,
+    destination: &Path,
+    target: CopyTarget,
+) -> AppResult<bool> {
+    let metadata = fs::symlink_metadata(destination).map_err(|error| {
+        format!(
+            "failed to inspect destination path {}: {error}",
+            destination.display()
+        )
+    })?;
+
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Ok(true);
+    }
+
+    directory_contents_are_outdated(source, destination, skill_name, target)
+}
+
+fn directory_contents_are_outdated(
+    source: &Path,
+    destination: &Path,
+    skill_name: &str,
+    target: CopyTarget,
+) -> AppResult<bool> {
+    let entries = fs::read_dir(source).map_err(|error| {
+        format!(
+            "failed to read source directory {}: {error}",
+            source.display()
+        )
+    })?;
+    let mut expected_names: BTreeSet<OsString> = BTreeSet::new();
+
+    for entry_result in entries {
+        let entry = entry_result
+            .map_err(|error| format!("failed to read source directory entry: {error}"))?;
+        let source_path = entry.path();
+        let file_name = entry.file_name();
+        expected_names.insert(file_name.clone());
+        let destination_path = destination.join(&file_name);
+        let source_file_type = entry.file_type().map_err(|error| {
+            format!(
+                "failed to inspect source entry {}: {error}",
+                source_path.display()
+            )
+        })?;
+
+        let destination_metadata = match fs::symlink_metadata(&destination_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect destination entry {}: {error}",
+                    destination_path.display()
+                ));
+            }
+        };
+
+        if source_file_type.is_dir() {
+            if !destination_metadata.file_type().is_dir()
+                || destination_metadata.file_type().is_symlink()
+            {
+                return Ok(true);
+            }
+
+            if directory_contents_are_outdated(&source_path, &destination_path, skill_name, target)?
+            {
+                return Ok(true);
+            }
+            continue;
+        }
+
+        if source_file_type.is_file() {
+            if !destination_metadata.file_type().is_file()
+                || destination_metadata.file_type().is_symlink()
+            {
+                return Ok(true);
+            }
+
+            if file_contents_are_outdated(&source_path, &destination_path, skill_name, target)? {
+                return Ok(true);
+            }
+            continue;
+        }
+    }
+
+    let destination_entries = fs::read_dir(destination).map_err(|error| {
+        format!(
+            "failed to read destination directory {}: {error}",
+            destination.display()
+        )
+    })?;
+
+    for entry_result in destination_entries {
+        let entry = entry_result
+            .map_err(|error| format!("failed to read destination directory entry: {error}"))?;
+
+        if !expected_names.contains(&entry.file_name()) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn file_contents_are_outdated(
+    source: &Path,
+    destination: &Path,
+    skill_name: &str,
+    target: CopyTarget,
+) -> AppResult<bool> {
+    let expected_bytes = expected_file_bytes(source, skill_name, target)?;
+    let destination_bytes = fs::read(destination).map_err(|error| {
+        format!(
+            "failed to read destination file {}: {error}",
+            destination.display()
+        )
+    })?;
+
+    Ok(expected_bytes != destination_bytes)
+}
+
+fn expected_file_bytes(source: &Path, skill_name: &str, target: CopyTarget) -> AppResult<Vec<u8>> {
+    if source.extension() == Some(OsStr::new("md")) {
+        let source_contents = fs::read_to_string(source).map_err(|error| {
+            format!("failed to read markdown file {}: {error}", source.display())
+        })?;
+        let transformed_contents = match target {
+            CopyTarget::Agents => remove_cursor_header(&source_contents),
+            CopyTarget::Cursor => ensure_cursor_header(&source_contents, skill_name),
+        };
+        return Ok(transformed_contents.into_bytes());
+    }
+
+    fs::read(source).map_err(|error| format!("failed to read file {}: {error}", source.display()))
 }
 
 fn path_exists(path: &Path) -> bool {
@@ -737,41 +1049,109 @@ fn apply_selection(
     skills: &[Skill],
     selection: &[bool],
     layout: &TargetLayout,
+) -> AppResult<ApplySelectionResult> {
+    if skills.len() != selection.len() {
+        return Err("selection size did not match available skills".to_owned());
+    }
+
+    let mut added_count = 0_usize;
+    let mut removed_count = 0_usize;
+
+    for (skill, is_selected) in skills.iter().zip(selection.iter()) {
+        let agents_path = layout.agents_skills_dir.join(&skill.name);
+        let cursor_path = layout.cursor_rules_dir.join(&skill.name);
+        let has_agents = path_exists(&agents_path);
+        let has_cursor = path_exists(&cursor_path);
+
+        if *is_selected {
+            let mut added_any = false;
+
+            if !has_agents {
+                sync_skill_copy(
+                    &skill.source_path,
+                    &skill.name,
+                    &agents_path,
+                    CopyTarget::Agents,
+                )?;
+                added_any = true;
+            }
+
+            if !has_cursor {
+                sync_skill_copy(
+                    &skill.source_path,
+                    &skill.name,
+                    &cursor_path,
+                    CopyTarget::Cursor,
+                )?;
+                added_any = true;
+            }
+
+            if added_any {
+                added_count += 1;
+            }
+            continue;
+        }
+
+        let mut removed_any = false;
+
+        if has_agents {
+            remove_path(&agents_path)?;
+            removed_any = true;
+        }
+
+        if has_cursor {
+            remove_path(&cursor_path)?;
+            removed_any = true;
+        }
+
+        if removed_any {
+            removed_count += 1;
+        }
+    }
+
+    Ok(ApplySelectionResult {
+        added_count,
+        removed_count,
+    })
+}
+
+fn sync_selected_skills(
+    skills: &[Skill],
+    selection: &[bool],
+    layout: &TargetLayout,
 ) -> AppResult<usize> {
     if skills.len() != selection.len() {
         return Err("selection size did not match available skills".to_owned());
     }
 
-    let mut copied_count = 0_usize;
-
+    let mut synced_count = 0_usize;
     for (skill, is_selected) in skills.iter().zip(selection.iter()) {
-        let agents_path = layout.agents_skills_dir.join(&skill.name);
-        let cursor_path = layout.cursor_rules_dir.join(&skill.name);
-
-        if *is_selected {
-            sync_skill_copy(
-                &skill.source_path,
-                &skill.name,
-                &agents_path,
-                CopyTarget::Agents,
-            )?;
-            sync_skill_copy(
-                &skill.source_path,
-                &skill.name,
-                &cursor_path,
-                CopyTarget::Cursor,
-            )?;
-            copied_count += 1;
+        if !*is_selected {
             continue;
         }
 
-        remove_path_if_exists(&agents_path)?;
-        remove_path_if_exists(&cursor_path)?;
+        let agents_path = layout.agents_skills_dir.join(&skill.name);
+        let cursor_path = layout.cursor_rules_dir.join(&skill.name);
+
+        sync_skill_copy(
+            &skill.source_path,
+            &skill.name,
+            &agents_path,
+            CopyTarget::Agents,
+        )?;
+        sync_skill_copy(
+            &skill.source_path,
+            &skill.name,
+            &cursor_path,
+            CopyTarget::Cursor,
+        )?;
+        synced_count += 1;
     }
 
-    Ok(copied_count)
+    Ok(synced_count)
 }
 
+#[derive(Clone, Copy)]
 enum CopyTarget {
     Agents,
     Cursor,
